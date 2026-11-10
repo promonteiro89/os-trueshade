@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [master, 'feature/**']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Read-only token: this job only checks out code and runs the tests.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # The runner's preinstalled Node.js (20 or later) is enough: no packages are installed.
+      - name: Node.js version
+        run: node --version
+
+      - name: Syntax check
+        run: npm run check
+
+      - name: Unit tests
+        run: npm test
+
+      # Printed so a release can be compared with the copies in the O11 and ODC libraries.
+      - name: Script checksum
+        run: npm run checksum

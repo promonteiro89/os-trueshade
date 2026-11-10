@@ -1,0 +1,5 @@
+node_modules/
+.DS_Store
+
+# Scratch space for delegated work (never committed)
+.work/
