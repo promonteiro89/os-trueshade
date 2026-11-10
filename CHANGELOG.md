@@ -2,9 +2,9 @@
 
 All notable changes to TrueShade for OutSystems 11 and ODC are documented here. One version covers both libraries, which ship the same `Source/JS/TrueShade.js`. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [1.1.0] - 2026-11-10
+## [2.0.0] - 2026-11-10
 
-OutSystems UI v3 dark mode support. No action, input or output changes: a drop-in replacement for 1.0.0.
+OutSystems UI v3 dark mode support. No action, input or output changes, but a major version because it changes how apps look: in an app on OutSystems UI v3, choosing dark (or `system-default` on a dark OS) now also switches OutSystems UI to its dark theme. Before, only CSS written against `data-theme` changed. Check custom CSS that was written for a light OutSystems UI under `[data-theme="dark"]`, since OutSystems UI's own dark tokens now apply on top of it. Apps without OutSystems UI v3 look the same as with 1.0.0.
 
 ### Added
 
