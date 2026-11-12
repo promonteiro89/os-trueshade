@@ -44,7 +44,7 @@ scripts/checksum.mjs      # Length + checksum, to confirm a module's copy matche
 ### Design notes
 
 - One small, dependency-free script (`TrueShade.Theme`) holds all the logic. The client actions and the block are thin wrappers around it.
-- The preference is stored in `localStorage`, per app: under `<ApplicationName>$layout-theme` when an application name is given, otherwise under `$OS_<first URL path segment>$layout-theme`. Giving several apps the same `ApplicationName` makes them share one preference.
+- The preference is stored in `localStorage`, per app: under `<ApplicationName>$layout-theme` when an application name is given, otherwise under `$OS_<first URL path segment>$layout-theme`. Giving several apps the same `ApplicationName` makes them share one preference. Within one app, use the same `ApplicationName` (or leave it empty) on the block and on every `Initialize` call: while TrueShade is running, a call with a different name joins the running setup and keeps its storage key.
 - `system-default` follows the operating system and reacts when it changes. An explicit `dark` or `light` ignores the OS.
 - Open tabs of the same app stay in sync through a `BroadcastChannel`, or through the `storage` event in browsers without one.
 - The theme is applied to `<html>` as a `data-theme` attribute and as the OutSystems UI v3 `os-dark-theme` class (see [How the theme is applied](#how-the-theme-is-applied)). TrueShade sets the class itself, so it has no OutSystems UI reference.
@@ -81,7 +81,7 @@ Theme values are always one of `system-default`, `dark` or `light`.
 ### Client Actions
 
 #### `Initialize`
-Loads the script if needed, reads the stored preference (seeding `system-default` when there is none), applies it, and starts listening for OS and cross-tab changes. Calling it again does nothing; a different `ApplicationName` on a second call is ignored with a console warning.
+Loads the script if needed, reads the stored preference (seeding `system-default` when there is none), applies it, and starts listening for OS and cross-tab changes. Calling it again while TrueShade is running joins that setup (each call needs its own `Dispose`); a different `ApplicationName` on that call, empty included, is ignored with a console warning.
 
 | Parameter | Direction | Type | Description |
 |---|---|---|---|
@@ -116,7 +116,7 @@ Returns the `localStorage` key in use, for debugging or for the [anti-flash snip
 | `StorageKey` | Out | Text | E.g. `myapp$layout-theme` or `$OS_MyApp$layout-theme` |
 
 #### `Dispose`
-Stops the OS and cross-tab listeners and resets the script's state. The stored preference and the theme already applied to the page stay as they are.
+Undoes one `Initialize`. When every `Initialize` has been matched by a `Dispose`, it stops the OS and cross-tab listeners and removes the `OnChange` subscriptions. The stored preference, the theme already applied to the page and the application name stay, so the Get and Set actions keep using the same storage key until the next `Initialize`, which uses the name it is given (an empty name means the key derived from the URL).
 
 #### `LoadTrueShadeScript`
 Loads the script if it isn't loaded yet. `Initialize` calls it; call it yourself only to load the script ahead of time.
@@ -148,6 +148,7 @@ The script exposes `TrueShade.Theme`:
 | `GetStorageKey()` | Text | As the client action |
 | `OnChange(cb, { immediate })` | Unsubscribe function | Calls `cb(effective, raw)` on every change; with `immediate: true`, also once right away |
 | `Dispose()` | – | As the client action |
+| `Version` | Text | The script version, e.g. `'2.1.0'`, to check which copy a module holds |
 
 ---
 

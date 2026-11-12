@@ -20,7 +20,8 @@ export function createBrowser({ osDark = false, broadcastChannel = true } = {}) 
             setItem: (k, v) => {
                 const oldValue = store.has(k) ? store.get(k) : null;
                 store.set(k, String(v));
-                // The 'storage' event fires in the OTHER tabs only.
+                // The 'storage' event fires in the OTHER tabs only, and only when the value changed.
+                if (oldValue === String(v)) return;
                 for (const other of tabs) {
                     if (other !== tab) other.dispatch('storage', { key: k, oldValue, newValue: String(v) });
                 }
@@ -96,7 +97,10 @@ export function createBrowser({ osDark = false, broadcastChannel = true } = {}) 
         };
         if (broadcastChannel) window.BroadcastChannel = FakeChannel;
 
+        // The script reads window.BroadcastChannel but constructs the global BroadcastChannel, as a
+        // browser allows; both must exist or the script silently falls back to the 'storage' event.
         const context = vm.createContext({
+            ...(broadcastChannel ? { BroadcastChannel: FakeChannel } : {}),
             window,
             document: { documentElement },
             localStorage: makeLocalStorage(tab),
@@ -108,6 +112,7 @@ export function createBrowser({ osDark = false, broadcastChannel = true } = {}) 
         });
         vm.runInContext(SOURCE, context, { filename: 'TrueShade.js' });
         tab.Theme = vm.runInContext('TrueShade.Theme', context);
+        tab.loadAgain = () => vm.runInContext(SOURCE, context, { filename: 'TrueShade.js' });
         tab.window = window;
         tab.mql = mql;
         tabs.push(tab);
@@ -117,6 +122,7 @@ export function createBrowser({ osDark = false, broadcastChannel = true } = {}) 
     return {
         createTab,
         store,
+        channels,
         setOsDark(value) {
             dark = value;
             for (const mql of mediaQueries) for (const cb of mql.listeners) cb({ matches: value });

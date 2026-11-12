@@ -1,6 +1,6 @@
 {
   "name": "trueshade",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "description": "Light, dark and system-default color scheme library shared by the OutSystems 11 and ODC TrueShade modules.",
   "license": "MIT",
