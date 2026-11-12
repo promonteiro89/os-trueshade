@@ -11,7 +11,8 @@
  * - Reacts to: OS color scheme changes and cross-tab updates. Cross-tab sync uses a per-module
  *   BroadcastChannel when available, falling back to the 'storage' event (filtered by our storage key)
  *   on browsers without BroadcastChannel support.
- * - Dispose(): removes listeners; does not clear the saved preference.
+ * - Dispose(): undoes one Initialize(). The listeners are removed when the last caller disposes; the saved
+ *   preference and the app name are kept, so Get/Set after Dispose still use the same storage key.
  *
  * Storage key format:
  * - If Initialize is called with an appName, that exact appName is used as the module id; key => "<appName>$layout-theme" (no $OS_ prefix).
@@ -27,7 +28,8 @@
  *     <script>
  *       (function () {
  *         try {
- *           var raw = localStorage.getItem('myapp$layout-theme') || 'system-default';
+ *           var raw = localStorage.getItem('myapp$layout-theme');
+ *           if (raw !== 'dark' && raw !== 'light') raw = 'system-default';
  *           var dark = raw === 'dark' ||
  *             (raw === 'system-default' && matchMedia('(prefers-color-scheme: dark)').matches);
  *           document.documentElement.dataset.theme = dark ? 'dark' : 'light';
@@ -43,6 +45,8 @@ var TrueShade;
     'use strict';
     var Theme;
     (function (Theme) {
+        // Loaded twice (e.g. from two URLs): keep the first copy, whose listeners and state are live.
+        if (Theme.Initialize) return;
         /** @typedef {'system-default'|'dark'|'light'} ThemeMode */
         const CONSTS = Object.freeze({
             STORAGE_KEY_SUFFIX: 'layout-theme',
@@ -84,6 +88,7 @@ var TrueShade;
         }
 
         let _initialized = false;
+        let _initCount = 0;                    // Initialize() calls not yet matched by Dispose()
         /** @type {BroadcastChannel|null} */
         let _channel = null;
         let _usingStorageFallback = false;     // true when syncing via 'storage' event (no BroadcastChannel)
@@ -110,8 +115,9 @@ var TrueShade;
             return _storageKey;
         }
 
-        // Returns the stored preference, seeding DEFAULT if absent. Falls back to DEFAULT on
-        // storage errors (e.g. privacy mode). Never returns null.
+        // Returns the stored preference; a missing or invalid value becomes DEFAULT and is written back
+        // once initialized (before Initialize() the key may still change, so nothing is written).
+        // Falls back to DEFAULT on storage errors (e.g. privacy mode). Never returns null.
         function ensureSeeded() {
             if (_rawTheme) return _rawTheme;
             const theme = CONSTS.MODES.DEFAULT;
@@ -122,13 +128,13 @@ var TrueShade;
                     _rawTheme = existing;
                     return _rawTheme;
                 }
-                localStorage.setItem(key, theme);
+                if (_initialized) localStorage.setItem(key, theme);
             } catch (_) { /* keep default */ }
             _rawTheme = theme;
             return _rawTheme;
         }
 
-        // Sets <html data-theme> to the resolved value, skipping the write when unchanged.
+        // Sets <html data-theme> and the os-dark-theme class to the resolved value, skipping unchanged writes.
         function applyTheme(rawTheme) {
             const resolved = resolve(rawTheme);
             const attr = CONSTS.DATASET_ATTR;
@@ -154,6 +160,9 @@ var TrueShade;
                 const snapshot = _listeners.slice();
                 for (let i = 0; i < snapshot.length; i++) {
                     try { snapshot[i](effective, rawTheme); } catch (e) { console.error('TrueShade.Theme: OnChange listener threw', e); }
+                    // A listener changed the theme (a nested emit already delivered and broadcast the
+                    // newer value) or disposed: stop, so nobody receives or broadcasts the stale one.
+                    if (_lastEffective !== effective || _lastRaw !== rawTheme) return;
                 }
             }
             // Only local user changes need broadcasting; other tabs observe OS changes themselves
@@ -172,25 +181,31 @@ var TrueShade;
         }
 
         // Cross-tab handlers. The sending tab already persisted the value, so receivers only
-        // update memory + DOM ('remote' tells emit() not to re-persist or re-broadcast).
-        function onChannelMessage(evt) {
-            const msg = evt && evt.data;
-            if (!msg || msg.type !== 'theme-change' || msg.v !== 1) return;
-            const t = msg.theme;
+        // update memory + DOM ('remote' tells emit() not to re-broadcast).
+        function applyRemote(t) {
             if (!isMode(t) || t === _rawTheme) return;
             _rawTheme = t;
             applyTheme(t);
             emit(t, 'remote');
         }
 
+        // A message only signals a change: localStorage holds the value, so two tabs changing the theme at
+        // once still converge, and a stray message can't make this tab disagree with what is saved.
+        function onChannelMessage(evt) {
+            const msg = evt && evt.data;
+            if (!msg || msg.type !== 'theme-change' || msg.v !== 1 || !isMode(msg.theme)) return;
+            let t = msg.theme;
+            try {
+                const stored = localStorage.getItem(getStorageKey());
+                if (isMode(stored)) t = stored;
+            } catch (_) { /* storage unavailable: trust the message */ }
+            applyRemote(t);
+        }
+
         // Fallback transport: fires in OTHER tabs when our storage key changes.
         function onStorageChange(evt) {
             if (!evt || evt.key !== getStorageKey()) return;
-            const t = evt.newValue;
-            if (!isMode(t) || t === _rawTheme) return;
-            _rawTheme = t;
-            applyTheme(t);
-            emit(t, 'remote');
+            applyRemote(evt.newValue);
         }
 
         // -------------------------
@@ -206,22 +221,29 @@ var TrueShade;
          * @returns {void}
          */
         function initialize(appName) {
+            // Strip a trailing '$' so 'myapp' and 'myapp$' produce the same key.
+            const name = typeof appName === 'string' ? appName.trim().replace(/\$+$/, '') : '';
             if (_initialized) {
-                if (typeof appName === 'string' && appName.trim()) {
+                _initCount++;
+                // Joining a running setup keeps its name and storage key. A different name, empty included,
+                // means one app uses two names: the block and every Initialize in an app must share one.
+                if (name !== _explicitModuleName) {
                     console.warn('TrueShade.Theme: Initialize() already called; ignoring appName "' +
-                        appName.trim() + '". Call Dispose() before re-initializing under a different name.');
+                        name + '" and keeping "' + _explicitModuleName + '" (empty = derived from the URL).' +
+                        ' Use the same ApplicationName for the block and every Initialize in an app.');
                 }
                 return;
             }
-            if (typeof appName === 'string') {
-                // Strip a trailing '$' so 'myapp' and 'myapp$' produce the same key.
-                const t = appName.trim().replace(/\$+$/, '');
-                if (t) {
-                    _explicitModuleName = t;
-                    _storageKey = '';
-                    _rawTheme = null;
-                }
+            // A fresh Initialize always takes its own name; an empty one means the key derived from the
+            // URL. (Dispose keeps the previous name only so Get/Set between Dispose and Initialize agree.)
+            if (name !== _explicitModuleName) {
+                _explicitModuleName = name;
+                _storageKey = '';
             }
+            _rawTheme = null; // re-read: a call before Initialize() may have cached an unseeded default
+            // Set before the first emit, so a listener that calls Initialize() again doesn't wire twice.
+            _initialized = true;
+            _initCount = 1;
             const theme = ensureSeeded();
             applyTheme(theme);
             addSchemeListener(onColorSchemeChange);
@@ -238,7 +260,6 @@ var TrueShade;
                 _usingStorageFallback = true;
             }
             emit(theme, 'init');
-            _initialized = true;
         }
 
         /**
@@ -260,31 +281,43 @@ var TrueShade;
          * Sets and applies the layout color scheme.
          * - Accepts only 'system-default' | 'dark' | 'light'; logs an error for invalid values.
          * - Persists to localStorage and applies immediately.
+         * - Before Initialize() it warns: the storage key may still change when Initialize(appName) runs.
          * @param {ThemeMode} theme
          * @returns {void}
          */
         function setLayoutColorScheme(theme) {
             if (!isMode(theme)) {
-                console.error(`Invalid theme: ${theme}`);
+                // String() would throw for a Symbol or a prototype-less object.
+                console.error('Invalid theme: ' + (typeof theme === 'string' ? theme.slice(0, 64) : typeof theme));
                 return;
             }
-            if (_rawTheme === theme) return;
+            if (!_initialized) {
+                console.warn('TrueShade.Theme: SetLayoutColorScheme() called before Initialize(); saving under "' +
+                    getStorageKey() + '".');
+            }
+            const changed = _rawTheme !== theme;
             _rawTheme = theme;
+            // Written even when unchanged in memory: storage may have been cleared or changed elsewhere.
             try {
                 const key = getStorageKey();
-                const existing = localStorage.getItem(key);
-                if (existing !== theme) localStorage.setItem(key, theme);
-            } catch (_) { /* ignore */ }
+                if (localStorage.getItem(key) !== theme) localStorage.setItem(key, theme);
+            } catch (e) {
+                console.warn('TrueShade.Theme: could not save the theme; it will not survive a reload.', e);
+            }
+            if (!changed) return;
             applyTheme(theme);
             emit(theme, 'local-set');
         }
 
         /**
-         * Removes all listeners and resets internal state (idempotent).
-         * The persisted preference is preserved.
+         * Undoes one Initialize() (idempotent once fully disposed). When the last caller disposes, it removes
+         * the OS and cross-tab listeners and every OnChange subscription. The persisted preference, the theme
+         * on <html> and the app name are kept, so Get/Set keep using the same storage key.
          * @returns {void}
          */
         function dispose() {
+            if (_initCount > 1) { _initCount--; return; }
+            _initCount = 0;
             removeSchemeListener(onColorSchemeChange);
             if (_channel) {
                 try { _channel.removeEventListener('message', onChannelMessage); _channel.close(); } catch (_) { /* ignore */ }
@@ -294,12 +327,8 @@ var TrueShade;
             _listeners.length = 0;
             _lastEffective = null;
             _lastRaw = null;
-            _rawTheme = null;
+            _rawTheme = null;               // re-read from storage on the next call
             _initialized = false;
-            _storageKey = '';
-            _explicitModuleName = '';
-            _moduleName = '';
-            _moduleNameComputed = false;
         }
 
         /**
@@ -322,13 +351,18 @@ var TrueShade;
                 const raw = ensureSeeded();
                 try { cb(resolve(raw), raw); } catch (e) { console.error('TrueShade.Theme: OnChange listener threw', e); }
             }
+            let active = true;
             return function unsubscribe() {
+                // Once only: a second call must not remove another subscription of the same callback.
+                if (!active) return;
+                active = false;
                 const idx = _listeners.indexOf(cb);
                 if (idx > -1) _listeners.splice(idx, 1);
             };
         }
 
         // Expose public API
+        Theme.Version = '2.1.0';
         Theme.Initialize = initialize;
         Theme.GetLayoutColorScheme = getLayoutColorScheme;
         Theme.GetStoredLayoutColorScheme = getStoredLayoutColorScheme;
@@ -344,7 +378,8 @@ var TrueShade;
          * Derives a compact module id from the current URL and wraps it as "$OS_<name>$".
          * - First non-empty path segment wins; otherwise the first hostname label; else fallback.
          * - Result is cached after the first call; the fallback/loc arguments are honored only on
-         *   that first (uncached) call. Dispose() clears the cache.
+         *   that first (uncached) call. The URL's first segment doesn't change in a SPA, so the cache
+         *   survives Dispose().
          * @param {string} [fallback]
          * @param {{ pathname: string, hostname: string }} [loc]
          * @returns {string}
