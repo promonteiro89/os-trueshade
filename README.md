@@ -81,7 +81,7 @@ Theme values are always one of `system-default`, `dark` or `light`.
 ### Client Actions
 
 #### `Initialize`
-Loads the script if needed, reads the stored preference (seeding `system-default` when there is none), applies it, and starts listening for OS and cross-tab changes. Calling it again while TrueShade is running joins that setup (each call needs its own `Dispose`); a different `ApplicationName` on that call, empty included, is ignored with a console warning.
+Loads the script if needed (raising `TrueShadeException` if it can't), reads the stored preference (seeding `system-default` when there is none), applies it, and starts listening for OS and cross-tab changes. Calling it again while TrueShade is running joins that setup (each call needs its own `Dispose`); a different `ApplicationName` on that call, empty included, is ignored with a console warning.
 
 | Parameter | Direction | Type | Description |
 |---|---|---|---|
@@ -116,10 +116,21 @@ Returns the `localStorage` key in use, for debugging or for the [anti-flash snip
 | `StorageKey` | Out | Text | E.g. `myapp$layout-theme` or `$OS_MyApp$layout-theme` |
 
 #### `Dispose`
-Undoes one `Initialize`. When every `Initialize` has been matched by a `Dispose`, it stops the OS and cross-tab listeners and removes the `OnChange` subscriptions. The stored preference, the theme already applied to the page and the application name stay, so the Get and Set actions keep using the same storage key until the next `Initialize`, which uses the name it is given (an empty name means the key derived from the URL).
+Undoes one `Initialize`. When every `Initialize` has been matched by a `Dispose`, it stops the OS and cross-tab listeners and removes the `OnChange` subscriptions. The stored preference, the theme already applied to the page and the application name stay, so the Get and Set actions keep using the same storage key until the next `Initialize`, which uses the name it is given (an empty name means the key derived from the URL). Called before the script has loaded, it does nothing.
+
+#### `GetVersion`
+Returns the version of the loaded script, to check which copy a module holds.
+
+| Parameter | Direction | Type | Description |
+|---|---|---|---|
+| `Version` | Out | Text | E.g. `2.1.0` |
 
 #### `LoadTrueShadeScript`
-Loads the script if it isn't loaded yet. `Initialize` calls it; call it yourself only to load the script ahead of time.
+Loads the script if it isn't loaded yet. `Initialize` and the block call it; call it yourself only to load the script ahead of time.
+
+| Parameter | Direction | Type | Description |
+|---|---|---|---|
+| `Success` | Out | Boolean | True when the script is loaded and ready |
 
 ### Block
 
@@ -131,9 +142,7 @@ Initializes TrueShade and reports theme changes. Place it once, in the layout or
 | `ApplicationName` | In, Text | Optional; same meaning as in `Initialize` |
 | `OnThemeChange(Effective, Raw)` | Event | Fires once when the block is ready and on every change, whether it comes from the user, the OS or another tab. `Effective` is `dark` or `light`; `Raw` is the stored preference |
 
-When the block is destroyed it only stops its notifications; the preference and the applied theme stay.
-
-Use one `TrueShade` block per page. Block instances share a single notification slot, so a second instance (for example one in the layout and one on the screen) takes over the first one's `OnThemeChange`.
+The block loads the script itself and raises `TrueShadeException` if it can't. Each instance keeps its own subscription, so a block in the layout and one on the screen both receive `OnThemeChange`. When the block is destroyed it stops its notifications and calls `Dispose`; the preference and the applied theme stay.
 
 ### JavaScript API
 
@@ -155,7 +164,7 @@ The script exposes `TrueShade.Theme`:
 ## Exceptions
 
 ### `TrueShadeException`
-Raised by `SetLayoutColorScheme`, `GetLayoutColorScheme`, `GetStoredLayoutColorScheme` and `GetStorageKey` when the script isn't loaded: "TrueShade is not defined. Please ensure the library is loaded correctly." Call `Initialize`, or place the `TrueShade` block, before using them.
+Raised by `Initialize` and the `TrueShade` block when the script fails to load, and by `SetLayoutColorScheme`, `GetLayoutColorScheme`, `GetStoredLayoutColorScheme`, `GetStorageKey` and `GetVersion` when the script isn't loaded: "TrueShade is not defined. Please ensure the library is loaded correctly." Call `Initialize`, or place the `TrueShade` block, before using them.
 
 ---
 

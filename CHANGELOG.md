@@ -2,12 +2,15 @@
 
 All notable changes to TrueShade for OutSystems 11 and ODC are documented here. One version covers both libraries, which ship the same `Source/JS/TrueShade.js`. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [2.1.0] - 2026-11-11
+## [2.1.0] - 2026-11-12
 
-Fixes from a JavaScript audit of the shared script. No action, input, output or styling changes.
+Fixes from a JavaScript audit of the shared script, with matching changes to the actions and the block in both libraries (O11 `TrueShade_Lib`, ODC `TrueShade`). No styling changes and no existing input or output removed: refresh the reference in consuming apps and republish them.
 
 ### Fixed
 
+- `OnThemeChange` no longer stops firing after a screen change. Each `TrueShade` block keeps its own `OnChange` subscription, instead of sharing one global slot (`window.__TrueShadeThemeUnsub`) in which the next block replaced the previous one's, and its `OnDestroy` now calls `Dispose`.
+- `Initialize` and the block raise `TrueShadeException` when the script fails to load, instead of an uncaught "TrueShade is not defined". The block now loads the script itself before initializing.
+- `Dispose` called before the script has loaded does nothing, instead of throwing.
 - `Dispose` undoes one `Initialize` instead of shutting TrueShade down for every caller: the listeners and `OnChange` subscriptions are removed only when the last caller disposes.
 - After `Dispose`, the Get and Set actions keep using the application's storage key. Before, they fell back to the key derived from the URL, so a choice made then was saved under the wrong key and lost. The next `Initialize` still uses the name it is given; an empty name goes back to the key derived from the URL.
 - A second `Initialize` with a different name, empty included, now logs a console warning; before, an empty name joining a named setup was silent. The block and every `Initialize` in an app should use the same `ApplicationName`.
@@ -25,7 +28,13 @@ Fixes from a JavaScript audit of the shared script. No action, input, output or 
 
 ### Added
 
-- `TrueShade.Theme.Version`.
+- `GetVersion` client action and `TrueShade.Theme.Version`, to check which script version a module holds.
+- `Success` output on `LoadTrueShadeScript`: True when the script is loaded and ready.
+
+### Changed
+
+- `GetLayoutColorScheme` and `GetStoredLayoutColorScheme` return the script's value directly, without passing it through `TextToIdentifier`. The values are the same.
+- The `Dispose` and `InitializeInBlock` descriptions describe the new behaviour.
 
 ### Tests
 
